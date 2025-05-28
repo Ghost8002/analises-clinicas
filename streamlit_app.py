@@ -62,15 +62,47 @@ def analisar_servicos_xml(arquivos_xml):
         try:
             tree = ET.parse(arquivo)
             root = tree.getroot()
+            
+            # Registra os namespaces encontrados
+            namespaces = {'ns': root.tag.split('}')[0].strip('{')} if '}' in root.tag else {}
+            
+            # Tenta encontrar a tag Discriminacao em diferentes caminhos possíveis
+            disc = None
+            # Tenta sem namespace
             disc = root.find('.//Discriminacao')
+            if disc is None:
+                # Tenta com namespace
+                for ns in namespaces.values():
+                    disc = root.find(f'.//{{{ns}}}Discriminacao')
+                    if disc is not None:
+                        break
+            
+            if disc is None:
+                # Tenta caminhos mais específicos
+                paths = [
+                    './/Servico/Discriminacao',
+                    './/InfDeclaracaoPrestacaoServico/Servico/Discriminacao',
+                    './/DeclaracaoPrestacaoServico//Discriminacao'
+                ]
+                for path in paths:
+                    disc = root.find(path)
+                    if disc is not None:
+                        break
+                    
+                    # Tenta com namespace
+                    for ns in namespaces.values():
+                        disc = root.find(f'.//{{{ns}}}Servico/{{{ns}}}Discriminacao')
+                        if disc is not None:
+                            break
+            
             if disc is not None and disc.text:
                 servicos = limpar_texto_servico(disc.text.strip()).split('\n')
                 todos_servicos.update(servicos)  # Adiciona serviços ao set
                 tipo = '\n'.join(servicos)
             else:
                 tipo = 'Não encontrado'
-        except Exception:
-            tipo = 'Erro de leitura'
+        except Exception as e:
+            tipo = f'Erro de leitura: {str(e)}'
         resultados.append({'arquivo': os.path.basename(arquivo.name), 'tipo_servico': tipo})
     
     return pd.DataFrame(resultados), sorted(list(todos_servicos))
