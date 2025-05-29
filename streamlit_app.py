@@ -213,7 +213,7 @@ def process_pdfs(input_files, output_pdf):
     return output_pdf
 
 # Configuração da página Streamlit
-st.set_page_config(page_title="Análise de Serviços", layout="wide")
+st.set_page_config(page_title="Análise de Serviço", layout="wide")
 
 # Criação de abas para diferentes funcionalidades
 tab1, tab2 = st.tabs(["Análise XML", "Correção PDF"])
