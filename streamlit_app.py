@@ -219,7 +219,7 @@ st.set_page_config(page_title="Análise de Serviços", layout="wide")
 tab1, tab2 = st.tabs(["Análise XML", "Correção PDF"])
 
 with tab1:
-    st.title("Análise de Serviços em XML")
+    st.title("Análise de Serviços")
     arquivos_upload = st.file_uploader("Selecione os arquivos XML ou ZIP", type=['xml', 'zip'], accept_multiple_files=True)
 
     if arquivos_upload and st.button("Analisar XML"):
@@ -257,7 +257,7 @@ with tab1:
             st.warning("Nenhum arquivo XML encontrado para análise.")
 
 with tab2:
-    st.title("Correção de PDFs Odontológicos")
+    st.title("Correção de PDFs")
     uploaded_files = st.file_uploader(
         "Selecione os PDFs para processar",
         type=['pdf'],
