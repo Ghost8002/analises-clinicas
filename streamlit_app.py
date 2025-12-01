@@ -55,9 +55,61 @@ def criar_pdf(servicos):
     buffer.seek(0)
     return buffer
 
+def buscar_tag_xml(root, tag_name, namespaces=None, paths=None):
+    """
+    Busca uma tag XML de forma flexível, tentando com e sem namespace.
+    
+    Args:
+        root: Elemento raiz do XML
+        tag_name: Nome da tag a buscar
+        namespaces: Dicionário de namespaces
+        paths: Lista de caminhos específicos para tentar
+    
+    Returns:
+        Elemento encontrado ou None
+    """
+    if namespaces is None:
+        namespaces = {}
+    if paths is None:
+        paths = []
+    
+    # Tenta sem namespace primeiro
+    elemento = root.find(f'.//{tag_name}')
+    if elemento is not None:
+        return elemento
+    
+    # Tenta com namespace
+    for ns in namespaces.values():
+        elemento = root.find(f'.//{{{ns}}}{tag_name}')
+        if elemento is not None:
+            return elemento
+    
+    # Tenta caminhos específicos
+    for path in paths:
+        elemento = root.find(path)
+        if elemento is not None:
+            return elemento
+        
+        # Tenta caminho com namespace
+        for ns in namespaces.values():
+            # Substitui tags no path por tags com namespace
+            path_com_ns = path
+            for tag in re.findall(r'([A-Za-z][A-Za-z0-9]*)', path):
+                path_com_ns = path_com_ns.replace(f'/{tag}', f'/{{{ns}}}{tag}')
+            elemento = root.find(path_com_ns)
+            if elemento is not None:
+                return elemento
+    
+    return None
+
 def analisar_servicos_xml(arquivos_xml):
+    """
+    Analisa arquivos XML e extrai informações de cada nota individualmente:
+    - Número da nota
+    - Valor (BaseCalculo)
+    - Descrição (Discriminacao)
+    """
     resultados = []
-    todos_servicos = set()  # Usando set para evitar duplicatas
     
     for arquivo in arquivos_xml:
         try:
@@ -65,48 +117,103 @@ def analisar_servicos_xml(arquivos_xml):
             root = tree.getroot()
             
             # Registra os namespaces encontrados
-            namespaces = {'ns': root.tag.split('}')[0].strip('{')} if '}' in root.tag else {}
+            namespaces = {}
+            if '}' in root.tag:
+                ns_url = root.tag.split('}')[0].strip('{')
+                namespaces['ns'] = ns_url
             
-            # Tenta encontrar a tag Discriminacao em diferentes caminhos possíveis
-            disc = None
-            # Tenta sem namespace
-            disc = root.find('.//Discriminacao')
-            if disc is None:
-                # Tenta com namespace
-                for ns in namespaces.values():
-                    disc = root.find(f'.//{{{ns}}}Discriminacao')
-                    if disc is not None:
-                        break
+            # Busca o número da nota
+            numero = None
+            paths_numero = [
+                './/Numero',
+                './/InfNfse/Numero',
+                './/IdentificacaoNfse/Numero',
+                './/Nfse/InfNfse/Numero'
+            ]
+            elem_numero = buscar_tag_xml(root, 'Numero', namespaces, paths_numero)
+            if elem_numero is not None and elem_numero.text:
+                numero = elem_numero.text.strip()
             
-            if disc is None:
-                # Tenta caminhos mais específicos
-                paths = [
-                    './/Servico/Discriminacao',
-                    './/InfDeclaracaoPrestacaoServico/Servico/Discriminacao',
-                    './/DeclaracaoPrestacaoServico//Discriminacao'
+            # Busca o valor (BaseCalculo dentro de ValoresNfse)
+            valor = None
+            # Primeiro tenta buscar diretamente BaseCalculo
+            paths_base_calculo = [
+                './/BaseCalculo',
+                './/ValoresNfse/BaseCalculo',
+                './/InfNfse/ValoresNfse/BaseCalculo',
+                './/Nfse/InfNfse/ValoresNfse/BaseCalculo',
+                './/Servico/Valores/BaseCalculo'
+            ]
+            elem_valor = buscar_tag_xml(root, 'BaseCalculo', namespaces, paths_base_calculo)
+            
+            # Se não encontrou, tenta buscar primeiro ValoresNfse e depois BaseCalculo dentro dele
+            if elem_valor is None:
+                paths_valores_nfse = [
+                    './/ValoresNfse',
+                    './/InfNfse/ValoresNfse',
+                    './/Nfse/InfNfse/ValoresNfse',
+                    './/Servico/Valores'
                 ]
-                for path in paths:
-                    disc = root.find(path)
-                    if disc is not None:
-                        break
-                    
-                    # Tenta com namespace
-                    for ns in namespaces.values():
-                        disc = root.find(f'.//{{{ns}}}Servico/{{{ns}}}Discriminacao')
-                        if disc is not None:
-                            break
+                elem_valores = buscar_tag_xml(root, 'ValoresNfse', namespaces, paths_valores_nfse)
+                
+                if elem_valores is not None:
+                    # Busca BaseCalculo dentro de ValoresNfse encontrado
+                    elem_valor = elem_valores.find('.//BaseCalculo')
+                    if elem_valor is None:
+                        for ns in namespaces.values():
+                            elem_valor = elem_valores.find(f'.//{{{ns}}}BaseCalculo')
+                            if elem_valor is not None:
+                                break
+                    # Se ainda não encontrou, tenta buscar como filho direto
+                    if elem_valor is None:
+                        elem_valor = elem_valores.find('BaseCalculo')
+                        if elem_valor is None:
+                            for ns in namespaces.values():
+                                elem_valor = elem_valores.find(f'{{{ns}}}BaseCalculo')
+                                if elem_valor is not None:
+                                    break
             
-            if disc is not None and disc.text:
-                servicos = limpar_texto_servico(disc.text.strip()).split('\n')
-                todos_servicos.update(servicos)  # Adiciona serviços ao set
-                tipo = '\n'.join(servicos)
-            else:
-                tipo = 'Não encontrado'
+            if elem_valor is not None and elem_valor.text:
+                valor_texto = elem_valor.text.strip()
+                # Formata valor numérico
+                try:
+                    valor_float = float(valor_texto.replace(',', '.'))
+                    valor = f"{valor_float:.2f}".replace('.', ',')
+                except:
+                    valor = valor_texto
+            
+            # Busca a descrição (Discriminacao)
+            descricao = None
+            paths_discriminacao = [
+                './/Discriminacao',
+                './/Servico/Discriminacao',
+                './/InfDeclaracaoPrestacaoServico/Servico/Discriminacao',
+                './/DeclaracaoPrestacaoServico//Discriminacao',
+                './/Nfse/InfNfse/Servico/Discriminacao'
+            ]
+            elem_disc = buscar_tag_xml(root, 'Discriminacao', namespaces, paths_discriminacao)
+            
+            if elem_disc is not None and elem_disc.text:
+                descricao_texto = limpar_texto_servico(elem_disc.text.strip())
+                descricao = descricao_texto if descricao_texto else None
+            
+            # Adiciona resultado (nota individual)
+            resultados.append({
+                'Arquivo': os.path.basename(arquivo.name),
+                'Numero_Nota': numero if numero else 'Não encontrado',
+                'Valor': valor if valor else 'Não encontrado',
+                'Descricao': descricao if descricao else 'Não encontrado'
+            })
+            
         except Exception as e:
-            tipo = f'Erro de leitura: {str(e)}'
-        resultados.append({'arquivo': os.path.basename(arquivo.name), 'tipo_servico': tipo})
+            resultados.append({
+                'Arquivo': os.path.basename(arquivo.name),
+                'Numero_Nota': f'Erro: {str(e)}',
+                'Valor': '',
+                'Descricao': ''
+            })
     
-    return pd.DataFrame(resultados), sorted(list(todos_servicos))
+    return pd.DataFrame(resultados)
 
 def extrair_zip(zip_file):
     temp_dir = tempfile.mkdtemp()
@@ -219,32 +326,29 @@ st.set_page_config(page_title="Análise de Serviço", layout="wide")
 tab1, tab2 = st.tabs(["Análise XML", "Correção PDF"])
 
 with tab1:
-    st.title("Análise de Serviços")
+    st.title("Análise de Notas Fiscais XML")
+    st.markdown("Extrai **Número**, **Valor** e **Descrição** de cada nota fiscal individualmente.")
     arquivos_upload = st.file_uploader("Selecione os arquivos XML ou ZIP", type=['xml', 'zip'], accept_multiple_files=True)
 
     if arquivos_upload and st.button("Analisar XML"):
         arquivos_xml, temp_dirs = processar_arquivos(arquivos_upload)
         
         if arquivos_xml:
-            df, todos_servicos = analisar_servicos_xml(arquivos_xml)
-            st.dataframe(df)
+            with st.spinner("Processando arquivos XML..."):
+                df = analisar_servicos_xml(arquivos_xml)
+            
+            st.success(f"✅ {len(df)} nota(s) processada(s) com sucesso!")
+            
+            # Exibe a tabela com os resultados
+            st.dataframe(df, use_container_width=True)
             
             # Botão para download dos resultados em CSV
-            csv = df.to_csv(index=False)
+            csv = df.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(
-                label="Baixar resultados em CSV",
+                label="📥 Baixar resultados em CSV",
                 data=csv,
-                file_name="resultados_analise.csv",
+                file_name="notas_fiscais_analise.csv",
                 mime="text/csv"
-            )
-            
-            # Botão para download dos resultados em PDF
-            pdf_buffer = criar_pdf(todos_servicos)
-            st.download_button(
-                label="Baixar lista de serviços em PDF",
-                data=pdf_buffer,
-                file_name="lista_servicos.pdf",
-                mime="application/pdf"
             )
             
             # Limpar arquivos temporários
